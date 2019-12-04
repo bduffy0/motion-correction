@@ -12,6 +12,8 @@ from niftynet.layer.base_layer import Layer
 from functools import wraps
 from time import time
 
+PRINT_TIMING = False
+
 try:
     import finufftpy
     finufft = True
@@ -25,7 +27,8 @@ def timing(f):
         ts = time()
         result = f(*args, **kw)
         te = time()
-        print('func:%r, took: %2.4f sec' % (f.__name__, te-ts))
+        if PRINT_TIMING:
+            print('func:%r, took: %2.4f sec' % (f.__name__, te-ts))
         return result
     return wrap
 
@@ -382,36 +385,40 @@ class MotionSimLayer(Layer):
         return im_out
 
     @timing
-    def layer_op(self, input_image, mask=None, test_trajectory=None):
+    def layer_op(self, input_data, mask=None):
 
         self.frequency_encoding_dim = np.random.choice(self.freq_encoding_choice)
 
-        image = np.squeeze(input_image[self.image_name][:, :, :, 0, 0])
-        self._calc_dimensions(image.shape)
+        image_data = input_data[self.image_name]
+
+        original_image = np.squeeze(image_data[:,:,:,0,0])
+        self._calc_dimensions(original_image.shape)
         self._simulate_random_trajectory()
 
-        # for testing using a given trajectory
-        if test_trajectory is not None:
-            self.gen_test_trajectory(translation=test_trajectory[0],rotation=test_trajectory[1])
-
-        im_freq_domain = self._fft_im(image)
+        # fft
+        im_freq_domain = self._fft_im(original_image)
         translated_im_freq_domain = self._translate_freq_domain(freq_domain=im_freq_domain)
 
-        # Nufft for rotations
+        # iNufft for rotations
         if self.nufft:
-            output_im = self._nufft(translated_im_freq_domain)
-            output_im = output_im / (output_im.size) # normalize
+            corrupted_im = self._nufft(translated_im_freq_domain)
+            corrupted_im = corrupted_im / corrupted_im.size # normalize
 
         else:
-            output_im = self._ifft_im(translated_im_freq_domain)
-
-        if self.apply_mask:
-            output_im = np.multiply(output_im,input_image[self.image_name][:,:,:,0,1]>0) # mask image
+            corrupted_im = self._ifft_im(translated_im_freq_domain)
 
         # magnitude
-        output_im = abs(output_im)
-        # swap so that the masked ground-truth is first
-        input_image[self.image_name][:,:,:,0,0] = input_image[self.image_name][:,:,:,0,1]
-        input_image[self.image_name][:,:,:,0,1] = output_im
-        return input_image, None
+        corrupted_im = abs(corrupted_im)
 
+        if self.apply_mask:
+            mask_im = input_data['mask'][:,:,:,0,0]>0
+            corrupted_im = np.multiply(corrupted_im, mask_im)
+            masked_original = np.multiply(original_image, mask_im)
+            image_data[:,:,:,0,0] = masked_original
+
+        image_data[:,:,:,0,1] = corrupted_im
+        
+        output_data = input_data
+        output_data[self.image_name] = image_data
+        
+        return output_data, None
