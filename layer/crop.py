@@ -67,6 +67,7 @@ class CropLayer(Layer):
         return dims
 
     def layer_op(self, input_image, mask=None):
+        #todo: use input arg mask
         mask = input_image['mask'][:,:,:,0,0]
 
         self.imshape = mask.shape

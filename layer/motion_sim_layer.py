@@ -411,6 +411,7 @@ class MotionSimLayer(Layer):
         corrupted_im = abs(corrupted_im)
 
         if self.apply_mask:
+            # todo: use input arg mask
             mask_im = input_data['mask'][:,:,:,0,0]>0
             corrupted_im = np.multiply(corrupted_im, mask_im)
             masked_original = np.multiply(original_image, mask_im)
@@ -421,4 +422,4 @@ class MotionSimLayer(Layer):
         output_data = input_data
         output_data[self.image_name] = image_data
         
-        return output_data, None
+        return output_data, mask
