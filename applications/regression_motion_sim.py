@@ -25,6 +25,8 @@ from niftynet.layer.pad import PadLayer
 
 from layer.crop import CropLayer
 from layer.motion_sim_layer import MotionSimLayer
+from layer.mask import MaskLayer
+
 from niftynet.layer.loss_regression import rmse_loss
 from utils.util import create_image_summary
 from niftynet.io.image_reader import ImageReader
@@ -55,7 +57,6 @@ class Regress(BaseApplication):
         self.action = action
         self.data_param = None
         self.custom_param = None
-        self.learning_rate = None
         self.current_lr = action_param.lr
         self.SUPPORTED_SAMPLING = {
         'uniform': (self.initialise_uniform_sampler,
@@ -80,10 +81,11 @@ class Regress(BaseApplication):
                 reader.initialise(data_param, task_param, file_list)
                 self.readers.append(reader)
         else:
-            inference_reader = ImageReader(['image'])
+            inference_reader = ImageReader(['image','mask']) # for masking at inference
+            # inference_reader = ImageReader(['image'])
+
             inference_reader.initialise(data_param, task_param, file_lists[0])
             self.readers = [inference_reader]
-
 
         foreground_masking_layer = None
         if self.net_param.normalise_foreground_only:
@@ -137,6 +139,9 @@ class Regress(BaseApplication):
                                             apply_mask=False)
 
             for reader in self.readers:
+                reader.add_preprocessing_layers(MaskLayer('image','mask'))
+
+            for reader in self.readers:
                 reader.add_preprocessing_layers(motionsimlayer)
 
             crop_layer = CropLayer('image', name='crop_layer',border_size=8,
@@ -150,6 +155,11 @@ class Regress(BaseApplication):
                     normalisation_layers + augmentation_layers)
 
         else:
+
+            for reader in self.readers:
+                reader.add_preprocessing_layers(
+                    MaskLayer('image','mask'))
+
             for reader in self.readers:
                 reader.add_preprocessing_layers(
                     normalisation_layers)
@@ -312,8 +322,6 @@ class Regress(BaseApplication):
 
         else:
 
-            self.learning_rate = tf.placeholder(tf.float32, shape=[])
-
             data_dict = self.get_sampler()[0][0].pop_batch_op()
 
             net_output = self.net(data_dict['image'],self.is_training)[0]
@@ -337,9 +345,9 @@ class Regress(BaseApplication):
     def interpret_output(self, batch_output):
         if self.is_training:
             return True
-
         return self.output_decoder.decode_batch(
-            batch_output['image'],batch_output['location'])
+            {'window_image': batch_output['image']},
+            batch_output['location'])
 
     def get_file_lists(self, data_partitioner):
         """This function pull the correct file_lists from the data partitioner
