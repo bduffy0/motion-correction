@@ -5,39 +5,123 @@ Created on Feb 6th 2018
 
 """
 
-from __future__ import absolute_import, print_function
 import numpy as np
 import math
 from niftynet.layer.base_layer import Layer
-from functools import wraps
-from time import time
-
-PRINT_TIMING = False
 
 try:
     import finufftpy
+
     finufft = True
 except ImportError:
     finufft = False
 
 
-def timing(f):
-    @wraps(f)
-    def wrap(*args, **kw):
-        ts = time()
-        result = f(*args, **kw)
-        te = time()
-        if PRINT_TIMING:
-            print('func:%r, took: %2.4f sec' % (f.__name__, te-ts))
-        return result
-    return wrap
+def get_center_mask(im_shape, pct=0.07):
+    mask = np.zeros(im_shape)
+    half_pct = (pct / 2)
+    center = [int(x / 2) for x in im_shape]
+
+    if len(im_shape) == 3:
+        mask[center[0] - math.ceil(im_shape[0] * half_pct):math.ceil(center[0] + im_shape[0] * half_pct),
+        center[1] - math.ceil(im_shape[1] * half_pct):math.ceil(center[1] + im_shape[1] * half_pct),
+        center[2] - math.ceil(im_shape[2] * half_pct):math.ceil(center[2] + im_shape[2] * half_pct)] = 1
+
+    elif len(im_shape) == 2:
+        mask[center[0] - math.ceil(im_shape[0] * half_pct):math.ceil(center[0] + im_shape[0] * half_pct),
+        center[1] - math.ceil(im_shape[1] * half_pct):math.ceil(center[1] + im_shape[1] * half_pct)] = 1
+    return mask
 
 
-def create_rotation_matrix_3d(angles):
+def get_center_rect(im_shape, pct=0.07,dim=0):
+    mask = np.zeros(im_shape)
+    half_pct = (pct / 2)
+    center = [int(x / 2) for x in im_shape]
+    mask = np.swapaxes(mask,0,dim)
+    mask[:,center[1] - math.ceil(im_shape[1] * half_pct):math.ceil(center[1] + im_shape[1] * half_pct)] = 1
+    mask = np.swapaxes(mask,0,dim)
+    return mask
+
+
+def get_center_cross(im_shape, pct=0.07):
+    mask = np.zeros(im_shape)
+    half_pct = (pct / 2)
+    center = [int(x / 2) for x in im_shape]
+
+    if len(im_shape) == 3:
+        mask[center[0] - math.ceil(im_shape[0] * half_pct):math.ceil(center[0] + im_shape[0] * half_pct),:,:] = 1
+        mask[:,center[1] - math.ceil(im_shape[1] * half_pct):math.ceil(center[1] + im_shape[1] * half_pct), :] = 1
+        mask[:,:,center[2] - math.ceil(im_shape[2] * half_pct):math.ceil(center[2] + im_shape[2] * half_pct)] = 1
+
+    elif len(im_shape) == 2:
+        mask[:, center[1] - math.ceil(im_shape[1] * half_pct):math.ceil(center[1] + im_shape[1] * half_pct)] = 1
+        mask[center[0] - math.ceil(im_shape[0] * half_pct):math.ceil(center[0] + im_shape[0] * half_pct), :] = 1
+
+    return mask
+
+
+def segment_array_by_locs(shape, locs):
+    """
+    generate array segmented by locs
+    :param shape (tuple): shape of array
+    :param locs (list of ints):
+    :return (np.array):
+    """
+    mask_out = np.zeros(np.prod(shape), dtype=int)
+    for i in range(len(locs) - 1):
+        l = [locs[i],
+             locs[i + 1]]
+        mask_out[l[0]:l[1]] = i + 1
+    return mask_out.reshape(shape)
+
+
+def assign_segments_to_random_indices(shape, seg_lengths):
+    seg_mask = np.zeros(shape, dtype='int')
+    random_indices = sorted(np.random.choice(shape, replace=False, size=sum(seg_lengths)))
+
+    seg_new_indices = (np.cumsum(seg_lengths)).tolist()
+
+    seg_new_indices = [0] + seg_new_indices
+    # TODO test this again
+    for i in range(len(seg_new_indices) - 1):
+        seg_mask[random_indices[seg_new_indices[i]:seg_new_indices[i + 1]]] = i + 1
+    return seg_mask
+
+
+def assign_segments_to_random_blocks(shape, seg_lengths):
+    """
+    generate randomly segmented array based on seg_lengths
+    :param im_shape (list of ints):
+    :param seg_lengths (list of ints):
+    :return:
+    """
+    seg_mask = np.zeros(shape, dtype='int')
+    seg_lengths_sorted = sorted(seg_lengths, reverse=True)
+    for i, seg_len in enumerate(seg_lengths_sorted):
+        loc = np.random.randint(0, seg_mask.size)
+        while (sum(seg_mask[loc:loc + seg_len]) != 0) or (loc + seg_len > seg_mask.size):  # ensure that the segment
+            loc = np.random.randint(0, seg_mask.size)
+        seg_mask[loc:loc + seg_len] = i + 1
+    return seg_mask
+
+
+def create_rand_partition(im_length, n_seg):
+    """
+    :param im_length (int): length of 1D array to partition
+    :param n_seg (int): num segs to partition into
+    :return: partition locations (list of indices)
+    """
+    rand_segment_locs = sorted(np.random.randint(im_length, size=n_seg + 1).astype(list))
+    rand_segment_locs[0] = 0
+    rand_segment_locs[-1] = None
+    return rand_segment_locs
+
+
+def create_rotation_matrix_3d(angles) -> np.array:
     """
     given a list of 3 angles, create a 3x3 rotation matrix that describes rotation about the origin
-    :param angles (list or numpy array) : rotation angles in 3 dimensions
-    :return (numpy array) : rotation matrix 3x3
+    :param angles (list or np.array) : rotation angles in 3 dimensions
+    :return (np.array) : rotation matrix 3x3
     """
 
     mat1 = np.array([[1., 0., 0.],
@@ -66,8 +150,9 @@ class MotionSimLayer(Layer):
     """
 
     def __init__(self, image_name, std_rotation_angle=0, std_translation=10,
-                 corrupt_pct=(15,20), freq_encoding_dim=(0,1,2), preserve_center_pct=0.07,
-                 name='motion_sim',apply_mask=True, nufft=False, proc_scale=-1, num_pieces=8):
+                 corrupt_pct=(15, 20), freq_encoding_dim=(0, 1, 2), preserve_center_pct=0.07,
+                 apply_mask=True, nufft=False, corruption_scheme='piecewise_transient',
+                 n_seg=8, fixed_n_seg=False):
 
         """
         :param image_name (str): key in data dictionary
@@ -79,38 +164,26 @@ class MotionSimLayer(Layer):
         :param name (str) : name of layer
         :param apply_mask (bool): apply mask to output or not
         :param nufft (bool): whether to use nufft for introducing rotations
-        :param proc_scale (float or int) : -1 = piecewise, -2 = uncorrelated, or float for random walk scale
         :param num_pieces (int): number of pieces for piecewise constant simulation
+        :param corruption_scheme 'piecewise_transient', 'piecewise_constant', 'guassian'
 
        raises ImportError if nufft is true but finufft cannot be imported
 
         """
 
-        super(MotionSimLayer, self).__init__(name=name)
         self.image_name = image_name
         self.trajectory = None
         self.preserve_center_frequency_pct = preserve_center_pct
         self.freq_encoding_choice = freq_encoding_dim
-        self.frequency_encoding_dim = None
-        self.proc_scale = proc_scale
-        self.num_pieces = num_pieces
+        self.frequency_encoding_dim = np.random.choice(self.freq_encoding_choice)
         self.std_rotation_angle, self.std_translation = std_rotation_angle, std_translation
         self.corrupt_pct_range = corrupt_pct
         self.apply_mask = apply_mask
-
-        if self.proc_scale == -1:
-            self._simulate_trajectory = self._piecewise_simulation
-            print('using piecewise motion simulation')
-        elif self.proc_scale == -2:
-            self._simulate_trajectory = self._gaussian_simulation
-            print('using uncorrelated gaussian simulation')
-        elif self.proc_scale > 0:
-            self._simulate_trajectory = self._random_walk_simulation
-            print('using random walk')
-        else:
-            raise ValueError('invalid proc_scale: should be either -1,-2 or positive real valued')
-
+        self.corruption_scheme = corruption_scheme
+        self.n_seg = n_seg
+        self.fixed_n_seg = fixed_n_seg
         self.nufft = nufft
+
         if (not finufft) and nufft:
             raise ImportError('finufftpy cannot be imported')
 
@@ -133,164 +206,97 @@ class MotionSimLayer(Layer):
         self.num_phase_encoding_steps = self.phase_encoding_shape[0] * self.phase_encoding_shape[1]
         self.translations = np.zeros(shape=(3, self.num_phase_encoding_steps))
         self.rotations = np.zeros(shape=(3, self.num_phase_encoding_steps))
-        self.frequency_encoding_dim = len(self.im_shape)-1 if self.frequency_encoding_dim == -1 else self.frequency_encoding_dim
+        self.frequency_encoding_dim = len(
+            self.im_shape) - 1 if self.frequency_encoding_dim == -1 else self.frequency_encoding_dim
 
-    @staticmethod
-    def random_walk_trajectory(length,start_scale=10,proc_scale=0.1):
-        seq = np.zeros([3, length])
-        seq[:, 0] = np.random.normal(loc=0.0, scale=start_scale, size=(3,))
-        for i in range(length - 1):
-            seq[:, i + 1] = seq[:, i] + np.random.normal(scale=proc_scale, size=(3,))
-        return seq
 
-    @staticmethod
-    def piecewise_trajectory(length,n_pieces=4,scale_trans=10,scale_rot=3):
-        """
-        generate random piecewise constant trajectory with n_pieces
-        :param length (int): length of trajectory
-        :param n_pieces (int): number of pieces
-        :param scale_trans (float): scale of normal distribution for translations
-        :param scale_rot (float): scale of normal distribution for rotations
-        :return: list of numpy arrays of size (3 x length) for translations and rotations
-        """
-        seq_trans = np.zeros([3, length])
-        seq_rot = np.zeros([3, length])
-        ind_to_split = np.random.choice(length,size=n_pieces)
-        split_trans = np.array_split(seq_trans,ind_to_split,axis=1)
-        split_rot = np.array_split(seq_rot,ind_to_split,axis=1)
-        for i,sp in enumerate(split_trans):
-            sp[:] = np.random.normal(scale=scale_trans, size=(3, 1))
-        for i, sp in enumerate(split_rot):
-            sp[:] = np.random.normal(scale=scale_rot, size=(3, 1))
-        return seq_trans,seq_rot
-
-    def _random_walk_simulation(self,length):
-        rand_translations = self.random_walk_trajectory(length,
-                                                        start_scale=self.std_translation,
-                                                        proc_scale=self.proc_scale)
-        rand_rotations = self.random_walk_trajectory(length,
-                                                     start_scale=self.std_rotation_angle,
-                                                     proc_scale=self.std_rotation_angle / 1000)
-        return rand_translations,rand_rotations
-
-    def _piecewise_simulation(self,length):
-        num_pieces = np.random.choice(np.arange(1, self.num_pieces))
-        rand_translations, rand_rotations = self.piecewise_trajectory(length, n_pieces=num_pieces,
-                                                                      scale_trans=self.std_translation,
-                                                                      scale_rot=self.std_rotation_angle)
-        return rand_translations,rand_rotations
-
-    def _gaussian_simulation(self,length):
-        rand_translations = np.random.normal(size=[3, length], scale=self.std_translation)
-        rand_rotations = np.random.normal(size=[3, length], scale=self.std_rotation_angle)
-        return rand_translations,rand_rotations
-
-    def _center_k_indices_to_preserve(self):
-        """get center k indices of freq domain"""
-        mid_pts = [int(math.ceil(x/2)) for x in self.phase_encoding_shape]
-        num_pts_preserve = [math.ceil(self.preserve_center_frequency_pct*x) for x in self.phase_encoding_shape]
-        ind_to_remove = {val+1:slice(mid_pts[i] - num_pts_preserve[i],mid_pts[i] + num_pts_preserve[i])
-                         for i,val in enumerate(self.phase_encoding_dims)}
-        ix_to_remove = [ind_to_remove.get(dim, slice(None)) for dim in range(4)]
-        return ix_to_remove
-
-    @timing
     def _simulate_random_trajectory(self):
         """
-        simulates random trajectory using a random number of lines generated from corrupt_pct_range
-
+        corruption_scheme is either {'piecewise_transient','piecewise_constant','guassian'}
+        simulates transient blocked random trajectory using a random number of lines generated from corrupt_pct_range
         modifies self.translations and self.rotations
-
         """
 
-        # Each voxel has a random translation and rotation for 3 dimensions.
-        rand_translations_vox = np.zeros([3] + self.im_shape)
-        rand_rotations_vox = np.zeros([3] + self.im_shape)
+        pct_corrupt = np.random.uniform(*[x / 100 for x in self.corrupt_pct_range])
 
-        # randomly choose PE lines to corrupt
-        choose_from_list = [np.arange(i) for i in self.phase_encoding_shape]
-        num_lines = [int(x/100*np.prod(self.phase_encoding_shape)) for x in self.corrupt_pct_range]
+        corrupt_matrix_shape = [int(x * math.sqrt(pct_corrupt)) for x in self.phase_encoding_shape]
+        # TODO keep this as a vector
 
-        # handle deterministic case where no range is given
-        if num_lines[0] == num_lines[1]:
-            num_lines = num_lines[0]
+        if np.prod(corrupt_matrix_shape) == 0:
+            corrupt_matrix_shape = [1, 1]
+
+        if self.corruption_scheme in {'guassian'}:
+            n_seg = np.prod(corrupt_matrix_shape)
+
         else:
-            num_lines = np.random.randint(num_lines[0],num_lines[1],size=1)
+            if self.fixed_n_seg:
+                n_seg = self.n_seg
+            else:
+                n_seg = np.random.choice(np.arange(1, self.n_seg))
 
-        if num_lines == 0:
-            # allow no lines to be modified
-            self.translations = rand_translations_vox.reshape(3, -1)
-            self.rotations = rand_rotations_vox.reshape(3, -1)
-            return
+        # segment a smaller vector occupying pct_corrupt percent of the space
+        if self.corruption_scheme in {'piecewise_transient', 'piecewise_constant'}:
+            seg_locs = create_rand_partition(np.prod(corrupt_matrix_shape),
+                                             n_seg=n_seg)
+        else:
+            seg_locs = list(range(n_seg))
 
-        motion_lines = []
-        for i in range(len(self.phase_encoding_shape)):
-            motion_lines.append(np.random.choice(choose_from_list[i], size=num_lines, replace=True).tolist())
+        rand_segmentation = segment_array_by_locs(
+            shape=np.prod(corrupt_matrix_shape), locs=seg_locs)
 
-        # sort by either first or second PE dim
-        dim_to_sort_by = np.random.choice([0,1])
-        motion_lines_sorted = [list(x) for x in zip(*sorted(zip(motion_lines[0], motion_lines[1]), key=lambda x:x[dim_to_sort_by]))]
-        motion_lines = motion_lines_sorted
+        seg_lengths = [(rand_segmentation == seg_num).sum() for seg_num in np.unique(rand_segmentation)]
 
-        # generate random motion parameters
-        rand_translations,rand_rotations = self._simulate_trajectory(len(motion_lines[0]))
+        # assign segments to a vector with same number of elements as pe-steps
+        if self.corruption_scheme in {'piecewise_transient', 'guassian'}:
+            seg_vector = assign_segments_to_random_indices(np.prod(self.phase_encoding_shape), seg_lengths)
+        else:
+            seg_vector = assign_segments_to_random_blocks(np.prod(self.phase_encoding_shape), seg_lengths)
 
-        # create indexing tuple ix
-        motion_ind_dict = {self.phase_encoding_dims[i]:val for i,val in enumerate(motion_lines)}
-        ix = [motion_ind_dict.get(dim, slice(None)) for dim in range(3)]
-        ix = tuple(ix)
+        # reshape to phase encoding shape with a random order
+        # if np.random.random() > 0.5:
+        reshape_order = np.random.choice(['F','C'])
+        seg_array = seg_vector.reshape(self.phase_encoding_shape, order=reshape_order)
+        self.order = reshape_order
 
-        # expand in freq-encoding dim
-        new_dims = [3,rand_translations.shape[-1]]
-        self.rand_translations = np.expand_dims(rand_translations,-1)
-        self.rand_rotations = np.expand_dims(rand_rotations,-1)
-        new_dims.append(self.im_shape[self.frequency_encoding_dim])
-        self.rand_translations = np.broadcast_to(self.rand_translations,new_dims)
-        self.rand_rotations = np.broadcast_to(self.rand_rotations,new_dims)
+        # mask center k-space
+        if reshape_order == 'C':
+            mask_not_including_center = get_center_rect(self.phase_encoding_shape, dim=1) == 0
+        else:
+            mask_not_including_center = get_center_rect(self.phase_encoding_shape, dim=0) == 0
 
-        #insert into voxel-wise motion parameters
-        for i in range(3):
-            rand_rotations_vox[(i,) + ix] = self.rand_rotations[i, :, :]
-            rand_translations_vox[(i,) + ix] = self.rand_translations[i, :, :]
+        seg_array = seg_array * mask_not_including_center
 
-        ix_to_remove = self._center_k_indices_to_preserve()
-        rand_translations_vox[ix_to_remove] = 0
-        rand_rotations_vox[ix_to_remove] = 0
+        # generate random translations and rotations
+        rand_translations = np.random.normal(scale=self.std_translation, size=(n_seg + 1, 3))
+        rand_rotations = np.random.normal(scale=self.std_rotation_angle, size=(n_seg + 1, 3))
 
-        self.translations = rand_translations_vox.reshape(3, -1)
-        rand_rotations_vox = rand_rotations_vox.reshape(3, -1)
-        self.rotations = rand_rotations_vox * (math.pi / 180.)  # convert to radians
+        # if segment==0, then no motion
+        rand_translations[0, :] = 0
+        rand_rotations[0, :] = 0
 
+        # lookup values for each segment
+        translations_pe = [rand_translations[:, i][seg_array] for i in range(3)]
+        rotations_pe = [rand_rotations[:, i][seg_array] for i in range(3)]
 
-    def gen_test_trajectory(self, translation,rotation):
-        """
-        # for testing - apply the same transformation at all Fourier (time) points
-        :param translation (list/array of length 3):
-        :param rotation (list/array of length 3):
+        # reshape and convert to radians
+        translations = np.array(
+            [np.broadcast_to(np.expand_dims(x, self.frequency_encoding_dim), self.im_shape) for x in translations_pe])
+        rotations = np.array(
+            [np.broadcast_to(np.expand_dims(x, self.frequency_encoding_dim), self.im_shape) for x in rotations_pe])
 
-        modifies self.translations, self.rotations in place
-        """
-        num_pts = np.prod(self.im_shape)
-        self.translations = np.array([np.ones([num_pts, ]).flatten() * translation[0],
-                                      np.ones([num_pts, ]).flatten() * translation[1],
-                                      np.ones([num_pts, ]).flatten() * translation[2]])
+        rotations = rotations * (math.pi / 180.)  # convert to radians
 
-        self.rotations = np.array([np.ones([num_pts, ]).flatten() * rotation[0],
-                                   np.ones([num_pts, ]).flatten() * rotation[1],
-                                   np.ones([num_pts, ]).flatten() * rotation[2]])
+        self.translations = translations.reshape(3, -1)
+        self.rotations = rotations.reshape(3, -1).reshape(3, -1)
 
-    @timing
     def _fft_im(self, image):
         output = (np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(image)))).astype(np.complex128)
-
         return output
 
-    @timing
     def _ifft_im(self, freq_domain):
         output = np.fft.ifftshift(np.fft.ifftn(freq_domain))
         return output
 
-    @timing
     def _translate_freq_domain(self, freq_domain):
         """
         image domain translation by adding phase shifts in frequency domain
@@ -308,12 +314,9 @@ class MotionSimLayer(Layer):
 
         return freq_domain_translated
 
-    @timing
     def _rotate_coordinates(self):
         """
-
         :return: grid_coordinates after applying self.rotations
-
         """
         center = [math.ceil((x - 1) / 2) for x in self.im_shape]
 
@@ -327,17 +330,19 @@ class MotionSimLayer(Layer):
         ix = (len(self.im_shape) + 1) * [slice(None)]
         ix[self.frequency_encoding_dim + 1] = 0  # dont need to rotate along freq encoding
 
-        rotations = rotations[ix].reshape(3,-1)
-        rotation_matrices = np.apply_along_axis(create_rotation_matrix_3d,axis=0,arr=rotations).transpose([-1,0,1])
-        rotation_matrices = rotation_matrices.reshape(self.phase_encoding_shape + [3,3])
+        rotations = rotations[ix].reshape(3, -1)
+        rotation_matrices = np.apply_along_axis(create_rotation_matrix_3d, axis=0, arr=rotations).transpose([-1, 0, 1])
+        rotation_matrices = rotation_matrices.reshape(self.phase_encoding_shape + [3, 3])
         rotation_matrices = np.expand_dims(rotation_matrices, self.frequency_encoding_dim)
 
         rotation_matrices = np.tile(rotation_matrices,
-                                    reps=([self.im_shape[self.frequency_encoding_dim] if i == self.frequency_encoding_dim else 1 for i in range(5)]))  # tile in freq encoding dimension
+                                    reps=([self.im_shape[
+                                               self.frequency_encoding_dim] if i == self.frequency_encoding_dim else 1
+                                           for i in range(5)]))  # tile in freq encoding dimension
 
         rotation_matrices = rotation_matrices.reshape([-1, 3, 3])
 
-        # tile grid coordinates for vectorizing computation
+        # tile grid coordinates
         grid_coordinates_tiled = np.tile(grid_coordinates, [3, 1])
         grid_coordinates_tiled = grid_coordinates_tiled.reshape([3, -1], order='F').T
         rotation_matrices = rotation_matrices.reshape([-1, 3])
@@ -353,9 +358,8 @@ class MotionSimLayer(Layer):
                                        range(new_grid_coords.shape[0])]
         new_grid_coordinates_scaled = [np.asfortranarray(i) for i in new_grid_coordinates_scaled]
 
-        return new_grid_coordinates_scaled,[grid_coordinates,new_grid_coords]
+        return new_grid_coordinates_scaled, [grid_coordinates, new_grid_coords]
 
-    @timing
     def _nufft(self, freq_domain_data, iflag=1, eps=1E-7):
         """
         rotate coordinates and perform nufft
@@ -376,24 +380,32 @@ class MotionSimLayer(Layer):
         freq_domain_data_flat = np.asfortranarray(freq_domain_data.flatten(order='F'))
 
         finufftpy.nufft3d1(new_grid_coords[0], new_grid_coords[1], new_grid_coords[2], freq_domain_data_flat,
-                            iflag, eps, self.im_shape[0], self.im_shape[1],
-                            self.im_shape[2], f, debug=0, spread_debug=0, spread_sort=2, fftw=0, modeord=0,
-                            chkbnds=0, upsampfac=1.25) # upsampling at 1.25 saves time at low precisions
+                           iflag, eps, self.im_shape[0], self.im_shape[1],
+                           self.im_shape[2], f, debug=0, spread_debug=0, spread_sort=2, fftw=0, modeord=0,
+                           chkbnds=0, upsampfac=1.25)  # upsampling at 1.25 saves time at low precisions
 
         im_out = f.reshape(self.im_shape, order='F')
 
         return im_out
 
-    @timing
-    def layer_op(self, input_data, mask=None):
+    def layer_op(self, input_data, mask=None,
+                 test_trajectory=False, freq_encoding_dim=None,
+                 translations_rotations=None):
 
-        self.frequency_encoding_dim = np.random.choice(self.freq_encoding_choice)
+        if freq_encoding_dim is None:
+            self.frequency_encoding_dim = np.random.choice(self.freq_encoding_choice)
+        else:
+            self.frequency_encoding_dim = freq_encoding_dim
 
         image_data = input_data[self.image_name]
 
-        original_image = np.squeeze(image_data[:,:,:,0,0])
+        original_image = np.squeeze(image_data[:, :, :, 0, 0])
         self._calc_dimensions(original_image.shape)
-        self._simulate_random_trajectory()
+
+        if translations_rotations is None:
+            self._simulate_random_trajectory()
+        else:
+            self.translations, self.rotations = translations_rotations
 
         # fft
         im_freq_domain = self._fft_im(original_image)
@@ -402,7 +414,7 @@ class MotionSimLayer(Layer):
         # iNufft for rotations
         if self.nufft:
             corrupted_im = self._nufft(translated_im_freq_domain)
-            corrupted_im = corrupted_im / corrupted_im.size # normalize
+            corrupted_im = corrupted_im / corrupted_im.size  # normalize
 
         else:
             corrupted_im = self._ifft_im(translated_im_freq_domain)
@@ -412,14 +424,17 @@ class MotionSimLayer(Layer):
 
         if self.apply_mask:
             # todo: use input arg mask
-            mask_im = input_data['mask'][:,:,:,0,0]>0
+            mask_im = input_data['mask'][:, :, :, 0, 0] > 0
             corrupted_im = np.multiply(corrupted_im, mask_im)
             masked_original = np.multiply(original_image, mask_im)
-            image_data[:,:,:,0,0] = masked_original
+            image_data[:, :, :, 0, 0] = masked_original
 
-        image_data[:,:,:,0,1] = corrupted_im
-        
+        image_data[:, :, :, 0, 1] = corrupted_im
+
         output_data = input_data
         output_data[self.image_name] = image_data
-        
+
         return output_data, mask
+
+    def __call__(self, *args, **kwargs):
+        return self.layer_op(*args, **kwargs)
