@@ -151,7 +151,7 @@ class MotionSimLayer(Layer):
 
     def __init__(self, image_name, std_rotation_angle=0, std_translation=10,
                  corrupt_pct=(15, 20), freq_encoding_dim=(0, 1, 2), preserve_center_pct=0.07,
-                 apply_mask=True, nufft=False, corruption_scheme='piecewise_transient',
+                 apply_mask=True, nufft=False, corruption_scheme='piecewise_constant',
                  n_seg=8, fixed_n_seg=False):
 
         """
@@ -165,7 +165,7 @@ class MotionSimLayer(Layer):
         :param apply_mask (bool): apply mask to output or not
         :param nufft (bool): whether to use nufft for introducing rotations
         :param num_pieces (int): number of pieces for piecewise constant simulation
-        :param corruption_scheme 'piecewise_transient', 'piecewise_constant', 'guassian'
+        :param corruption_scheme 'piecewise_transient', 'piecewise_constant', 'gaussian'
 
        raises ImportError if nufft is true but finufft cannot be imported
 
@@ -212,7 +212,7 @@ class MotionSimLayer(Layer):
 
     def _simulate_random_trajectory(self):
         """
-        corruption_scheme is either {'piecewise_transient','piecewise_constant','guassian'}
+        corruption_scheme is either {'piecewise_transient','piecewise_constant','gaussian'}
         simulates transient blocked random trajectory using a random number of lines generated from corrupt_pct_range
         modifies self.translations and self.rotations
         """
@@ -225,7 +225,7 @@ class MotionSimLayer(Layer):
         if np.prod(corrupt_matrix_shape) == 0:
             corrupt_matrix_shape = [1, 1]
 
-        if self.corruption_scheme in {'guassian'}:
+        if self.corruption_scheme in {'gaussian'}:
             n_seg = np.prod(corrupt_matrix_shape)
 
         else:
@@ -247,7 +247,7 @@ class MotionSimLayer(Layer):
         seg_lengths = [(rand_segmentation == seg_num).sum() for seg_num in np.unique(rand_segmentation)]
 
         # assign segments to a vector with same number of elements as pe-steps
-        if self.corruption_scheme in {'piecewise_transient', 'guassian'}:
+        if self.corruption_scheme in {'piecewise_transient', 'gaussian'}:
             seg_vector = assign_segments_to_random_indices(np.prod(self.phase_encoding_shape), seg_lengths)
         else:
             seg_vector = assign_segments_to_random_blocks(np.prod(self.phase_encoding_shape), seg_lengths)

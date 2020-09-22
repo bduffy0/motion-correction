@@ -163,7 +163,7 @@ class MotionSimLayer:
         :param apply_mask (bool): apply mask to output or not
         :param nufft (bool): whether to use nufft for introducing rotations
         :param num_pieces (int): number of pieces for piecewise constant simulation
-        :param corruption_scheme 'piecewise_transient', 'piecewise_constant', 'guassian'
+        :param corruption_scheme 'piecewise_transient', 'piecewise_constant', 'gaussian'
 
        raises ImportError if nufft is true but finufft cannot be imported
 
@@ -209,7 +209,7 @@ class MotionSimLayer:
 
     def _simulate_random_trajectory(self):
         """
-        corruption_scheme is either {'piecewise_transient','piecewise_constant','guassian'}
+        corruption_scheme is either {'piecewise_transient','piecewise_constant','gaussian'}
         simulates transient blocked random trajectory using a random number of lines generated from corrupt_pct_range
         modifies self.translations and self.rotations
         """
@@ -222,7 +222,7 @@ class MotionSimLayer:
         if np.prod(corrupt_matrix_shape) == 0:
             corrupt_matrix_shape = [1, 1]
 
-        if self.corruption_scheme in {'guassian'}:
+        if self.corruption_scheme in {'gaussian'}:
             n_seg = np.prod(corrupt_matrix_shape)
 
         else:
@@ -244,7 +244,7 @@ class MotionSimLayer:
         seg_lengths = [(rand_segmentation == seg_num).sum() for seg_num in np.unique(rand_segmentation)]
 
         # assign segments to a vector with same number of elements as pe-steps
-        if self.corruption_scheme in {'piecewise_transient', 'guassian'}:
+        if self.corruption_scheme in {'piecewise_transient', 'gaussian'}:
             seg_vector = assign_segments_to_random_indices(np.prod(self.phase_encoding_shape), seg_lengths)
         else:
             seg_vector = assign_segments_to_random_blocks(np.prod(self.phase_encoding_shape), seg_lengths)
