@@ -12,7 +12,7 @@ see [examples](examples)
 ![Alt text](images/circle_example.png?raw=true "Title")
 
 
-###Reference
+### Reference
 
 @article{duffy2021retrospective,
   title={Retrospective motion artifact correction of structural MRI images using deep learning improves the quality of cortical surface reconstructions},
